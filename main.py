@@ -28,6 +28,7 @@ def main():
     application = webapp.WSGIApplication([
         ('/', MainHandler),
         ('/feed', incoming.FeedHandler),
+        ('/fetch', incoming.FetchHandler),
         ],
                                          debug=True)
     util.run_wsgi_app(application)

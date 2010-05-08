@@ -1,9 +1,13 @@
 from google.appengine.ext import db
 from google.appengine.ext import webapp
+from google.appengine.api import urlfetch
+from google.appengine.api.labs import taskqueue
 
 import hashlib
+from datetime import datetime
 
 from url_normalize import url_normalize
+import feedparser
 
 class NormalizedLinkProperty(db.LinkProperty):
     def validate(self, value):
@@ -17,9 +21,9 @@ class Feed(db.Model):
     
     def __str__(self):
         if (self.private):
-            return "%s URL: %s Private: %s" % (self.key(), self.link, self.private)
+            return "URL: %s Private: %s" % (self.link, self.private)
         else:
-            return "%s Keyname: %s URL: %s" % (self.key(), Feed.makekeyname(self.link), self.link)
+            return "URL: %s" % (self.link)
     
     @staticmethod
     def makekeyname(url):
@@ -30,7 +34,7 @@ class Item(db.Model):
     link = NormalizedLinkProperty(required=True)
     retrieved = db.DateTimeProperty(required=True)
     content = db.TextProperty(required=True)
-    summary = db.StringProperty(required=True)
+    summary = db.StringProperty(required=False)
     version = db.IntegerProperty(required=True) # Numeric "schema" version starting from 1
     
     # Sometimes here depending on how it came in
@@ -40,6 +44,10 @@ class Item(db.Model):
     
     # here for some things
     geo = db.GeoPtProperty(required=False)
+    
+    @staticmethod
+    def makekeyname(url):
+        return hashlib.sha224(url_normalize(url)).hexdigest()
 
 class FeedHandler(webapp.RequestHandler):
     def post(self):
@@ -66,4 +74,29 @@ class FeedHandler(webapp.RequestHandler):
             
         self.response.out.write(ret)
         
-    
+class FetchHandler(webapp.RequestHandler):
+    def post(self):
+        '''Fetches one feed.'''
+        key = self.request.body
+        feed = Feed.get(key)
+        result = urlfetch.fetch(feed.link)
+        parsed = feedparser.parse(result.content)
+        for entry in parsed['entries']:
+            item = Item.get_or_insert(Item.makekeyname(entry.link),
+            title = entry.title,
+            link = entry.link,
+            retrieved = datetime.now(),
+            content = entry.content[0].value,
+            #summary = entry.summary,
+            version = 1,
+            created = datetime(*(entry.published_parsed[:6])),
+            feed = feed,
+            )
+        self.response.out.write("%d\n" % len(parsed['entries']))
+        
+    def get(self):
+        '''Schedules all feeds to be fetched.'''
+        query = Feed.all()
+        for feed in query:
+            task = taskqueue.Task(payload=str(feed.key()), url="/fetch")
+            task.add()
