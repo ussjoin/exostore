@@ -9,7 +9,9 @@ class Config():
         # Check whether we already have an instance
         if Config.__instance is None:
             # Create and remember instance
-            Config.__instance = ConfigParser.read('config.ini')
+            conf = ConfigParser()
+            conf.read('config.ini')
+            Config.__instance = conf
 
         # Store instance reference as the only member in the handle
         self.__dict__['_Config__instance'] = Config.__instance

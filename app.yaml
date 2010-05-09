@@ -4,6 +4,8 @@ runtime: python
 api_version: 1
 
 handlers:
+- url: /push
+  script: main.py
 - url: .*
   script: main.py
   login: admin

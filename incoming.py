@@ -5,7 +5,7 @@ from google.appengine.api.labs import taskqueue
 
 import hashlib
 from datetime import datetime
-from urllib import urlencode
+from urllib import urlencode, unquote
 
 from url_normalize import url_normalize
 import feedparser
@@ -57,7 +57,7 @@ class Item(db.Model):
 class FeedHandler(webapp.RequestHandler):
     def post(self):
         '''Adds a feed.'''
-        feedurl = self.request.body
+        feedurl = self.request.get('url')
         feed = Feed.get_or_insert(Feed.makekeyname(feedurl), link=feedurl, subscribed=False)
         task = taskqueue.Task(payload=str(feed.key()), url="/push", method="PUT")
         task.add()
@@ -132,7 +132,7 @@ class PuSHHandler(webapp.RequestHandler):
             "hub.secret": secret,
             "hub.topic": feed.link
         }
-        h = httplib2.Http(".cache")
+        h = httplib2.Http()
         h.add_credentials(username, password)
         resp, content = h.request("https://superfeedr.com/hubbub", "POST", urlencode(payload))
         
@@ -151,7 +151,7 @@ class PuSHHandler(webapp.RequestHandler):
             "hub.secret": secret,
             "hub.topic": feed.link
         }
-        h = httplib2.Http(".cache")
+        h = httplib2.Http()
         h.add_credentials(username, password)
         resp, content = h.request("https://superfeedr.com/hubbub", "POST", urlencode(payload))
 
