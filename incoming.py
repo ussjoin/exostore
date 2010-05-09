@@ -5,6 +5,7 @@ from google.appengine.api.labs import taskqueue
 
 import hashlib
 from datetime import datetime
+import zlib
 
 from url_normalize import url_normalize
 import feedparser
@@ -17,6 +18,7 @@ class NormalizedLinkProperty(db.LinkProperty):
 
 class Feed(db.Model):
     link = NormalizedLinkProperty(required=True)
+    subscribed = db.BooleanProperty(required=True)
     private = db.UserProperty(required=False) # If set, is private to that user
     
     def __str__(self):
@@ -53,7 +55,9 @@ class FeedHandler(webapp.RequestHandler):
     def post(self):
         '''Adds a feed.'''
         feedurl = self.request.body
-        feed = Feed.get_or_insert(Feed.makekeyname(feedurl), link=feedurl)
+        feed = Feed.get_or_insert(Feed.makekeyname(feedurl), link=feedurl, subscribed=False)
+        task = taskqueue.Task(payload=str(feed.key()), url="/push", method="PUT")
+        task.add()
         self.response.out.write(Feed.makekeyname(feedurl)+"\n")
     
     def delete(self):
@@ -74,13 +78,19 @@ class FeedHandler(webapp.RequestHandler):
             
         self.response.out.write(ret)
         
-class FetchHandler(webapp.RequestHandler):
-    def post(self):
-        '''Fetches one feed.'''
-        key = self.request.body
-        feed = Feed.get(key)
-        result = urlfetch.fetch(feed.link)
-        parsed = feedparser.parse(result.content)
+class Parser():
+    @staticmethod
+    def parse(xml):
+        '''Parses a blob of XML, e.g., from a fetcher or from PuSH.'''
+        parsed = feedparser.parse(xml)
+        selflink = parsed.feed.link # Best if we can't find a selflink
+        for l in parsed.feed.links:
+            if l.rel == "self":
+                selflink = l.href
+
+        query = Feed.gql("WHERE link = :1", url_normalize(selflink))
+        feed = query.fetch(1)[0]
+        
         for entry in parsed['entries']:
             item = Item.get_or_insert(Item.makekeyname(entry.link),
             title = entry.title,
@@ -91,8 +101,50 @@ class FetchHandler(webapp.RequestHandler):
             version = 1,
             created = datetime(*(entry.published_parsed[:6])),
             feed = feed,
+            private = feed.private,
             )
-        self.response.out.write("%d\n" % len(parsed['entries']))
+        
+class PuSHHandler(webapp.RequestHandler):
+    def post(self):
+        '''This is the callback URL for PuSH.'''
+        if (self.request.get('hub.challenge') != ''):
+            # Time to confirm our subscription.
+            self.response.out.write(self.request.get('hub.challenge'))
+        else:
+            # This is a content notification.
+            Parser.parse(self.request.body)
+        pass
+    
+    def put(self):
+        '''This URL triggers a subscription request to SuperFeedr.'''
+        key = self.request.body
+        feed = Feed.get(key)            
+        payload = "hub.mode=subscribe&hub.verify=async&hub.callback=http://exocortex-store.appspot.com/push&hub.topic=%s" % feed.link
+        result = urlfetch.fetch(
+            url="https://superfeedr.com/hubbub",
+            payload=payload,
+            method=urlfetch.POST,
+            )
+        
+    def delete(self):
+        '''This URL triggers an unsubscribe request to SuperFeedr.'''
+        key = self.request.body
+        feed = Feed.get(key)            
+        payload = "hub.mode=unsubscribe&hub.verify=async&hub.callback=http://exocortex-store.appspot.com/push&hub.topic=%s" % feed.link
+        result = urlfetch.fetch(
+            url="https://superfeedr.com/hubbub",
+            payload=payload,
+            method=urlfetch.POST,
+            )
+
+class FetchHandler(webapp.RequestHandler):
+    def post(self):
+        '''Fetches one feed.'''
+        key = self.request.body
+        feed = Feed.get(key)
+        result = urlfetch.fetch(feed.link)
+        Parser.parse(result.content)
+        
         
     def get(self):
         '''Schedules all feeds to be fetched.'''

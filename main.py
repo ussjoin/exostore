@@ -29,6 +29,7 @@ def main():
         ('/', MainHandler),
         ('/feed', incoming.FeedHandler),
         ('/fetch', incoming.FetchHandler),
+        ('/push', incoming.PuSHHandler),
         ],
                                          debug=True)
     util.run_wsgi_app(application)
