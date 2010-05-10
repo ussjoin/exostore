@@ -3,13 +3,14 @@ from google.appengine.ext import webapp
 from google.appengine.api import urlfetch
 from google.appengine.api.labs import taskqueue
 
+import logging
 import hashlib
+from base64 import b64encode
 from datetime import datetime
 from urllib import urlencode, unquote
 
 from url_normalize import url_normalize
 import feedparser
-import httplib2
 
 from config import Config
 
@@ -107,15 +108,13 @@ class Parser():
             )
         
 class PuSHHandler(webapp.RequestHandler):
+    def get(self):
+        '''This is only called for verification by the hub'''
+        self.response.out.write(self.request.get('hub.challenge'))
+    
     def post(self):
-        '''This is the callback URL for PuSH.'''
-        if (self.request.get('hub.challenge') != ''):
-            # Time to confirm our subscription.
-            self.response.out.write(self.request.get('hub.challenge'))
-        else:
-            # This is a content notification.
-            Parser.parse(self.request.body)
-        pass
+        '''This is a content notification.'''
+        Parser.parse(self.request.body)
     
     def put(self):
         '''This URL triggers a subscription request to SuperFeedr.'''
@@ -125,16 +124,19 @@ class PuSHHandler(webapp.RequestHandler):
         username = conf.get('Superfeedr', 'username')
         password = conf.get('Superfeedr', 'password')
         secret = conf.get('Superfeedr', 'secret')
+        address = conf.get('Superfeedr', 'address')
+        callback = conf.get('Superfeedr', 'callback')
         payload = {
             "hub.mode": "subscribe",
             "hub.verify": "async",
-            "hub.callback": "http://exocortex-store.appspot.com/push",
+            "hub.callback": callback,
             "hub.secret": secret,
             "hub.topic": feed.link
         }
-        h = httplib2.Http()
-        h.add_credentials(username, password)
-        resp, content = h.request("https://superfeedr.com/hubbub", "POST", urlencode(payload))
+        s = "%s:%s" % (username, password)
+        head = {"Authorization": "Basic %s" % b64encode(s)}
+        
+        result = urlfetch.fetch(address, payload=urlencode(payload), method=urlfetch.POST, headers=head, deadline=10)
         
     def delete(self):
         '''This URL triggers an unsubscribe request to SuperFeedr.'''
@@ -144,16 +146,19 @@ class PuSHHandler(webapp.RequestHandler):
         username = conf.get('Superfeedr', 'username')
         password = conf.get('Superfeedr', 'password')
         secret = conf.get('Superfeedr', 'secret')
+        address = conf.get('Superfeedr', 'address')
+        callback = conf.get('Superfeedr', 'callback')
         payload = {
             "hub.mode": "unsubscribe",
             "hub.verify": "async",
-            "hub.callback": "http://exocortex-store.appspot.com/push",
+            "hub.callback": callback,
             "hub.secret": secret,
             "hub.topic": feed.link
         }
-        h = httplib2.Http()
-        h.add_credentials(username, password)
-        resp, content = h.request("https://superfeedr.com/hubbub", "POST", urlencode(payload))
+        s = "%s:%s" % (username, password)
+        head = {"Authorization": "Basic %s" % b64encode(s)}
+        
+        result = urlfetch.fetch(address, payload=urlencode(payload), method=urlfetch.POST, headers=head, deadline=10)
 
 class FetchHandler(webapp.RequestHandler):
     def post(self):
